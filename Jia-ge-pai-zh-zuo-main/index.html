@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CupiCho Price Tag System v5.24</title>
+    
+    <!-- 崩潰偵測雷達 -->
+    <script>
+        window.addEventListener('error', function(e) {
+            var errorDiv = document.createElement('div');
+            errorDiv.style.cssText = 'position:fixed; top:0; left:0; width:100%; background:#ef4444; color:white; z-index:9999; padding:16px; font-size:14px; word-break:break-all; font-family:sans-serif; box-shadow: 0 4px 10px rgba(0,0,0,0.5); line-height: 1.5;';
+            errorDiv.innerHTML = '<b>系統錯誤:</b> ' + e.message + ' (行數: ' + e.lineno + ')';
+            document.body.appendChild(errorDiv);
+        });
+    </script>
+
+    <!-- 1. 載入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 2. 載入 React 核心 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+    
+    <!-- 3. 載入 Babel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.6/babel.min.js" crossorigin="anonymous"></script>
+
+    <!-- 4. 載入 Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js" crossorigin="anonymous"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js" crossorigin="anonymous"></script>
+
+    <!-- 5. 載入 JsBarcode -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.11.5/JsBarcode.all.min.js" crossorigin="anonymous"></script>
+
+    <!-- 6. 載入高質感雲端字型 -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Noto+Serif+TC:wght@400;700;900&family=Shippori+Mincho:wght@400;700;800&display=swap');
+        
+        .print-container { display: none !important; }
+
+        @media print {
+            @page { size: A4; margin: 10mm 5mm; }
+            body { background-color: white !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; }
+            #root { background-color: white !important; }
+            .no-print { display: none !important; }
+            * { box-shadow: none !important; text-shadow: none !important; }
+            .print-container { 
+                display: grid !important; 
+                grid-template-columns: 1fr 1fr !important; 
+                gap: 5mm !important; 
+                width: 100% !important; 
+                background-color: transparent !important; 
+                padding: 0 !important; 
+                justify-content: center !important;
+            }
+            .cupicho-tag { 
+                border: 1px dashed #ccc !important; 
+                break-inside: avoid !important; 
+                page-break-inside: avoid !important;
+                margin: 0 auto !important; 
+                background-color: #2B130F !important; 
+                color: #E1C284 !important; 
+                -webkit-print-color-adjust: exact !important; 
+                print-color-adjust: exact !important; 
+            }
+        }
+    </style>
+</head>
+<body class="bg-[#1a0e0b] text-[#E1C284] m-0 overflow-hidden print:overflow-visible print:bg-white">
+    
+    <div id="root">
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: #E1C284; font-family: sans-serif;">
+            <div style="width: 40px; height: 40px; border: 3px solid rgba(225,194,132,0.3); border-top-color: #E1C284; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px;"></div>
+            <p style="font-weight: bold; letter-spacing: 2px;">系統載入中</p>
+            <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+        </div>
+    </div>
+
+    <script type="text/babel" data-presets="react">
+        const { useState, useEffect, useRef, useMemo } = React;
+        const VERSION = "v5.24"; 
+        
+        // Lucide Icons
+        const Icon = ({ name, size = 18, className }) => {
+            const icons = {
+                Plus: <path d="M5 12h14M12 5v14" />,
+                Minus: <path d="M5 12h14" />,
+                Trash2: <><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" /><line x1="10" x2="10" y1="11" y2="17" /><line x1="14" x2="14" y1="11" y2="17" /></>,
+                Printer: <><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" /></>,
+                Edit3: <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />,
+                X: <path d="M18 6 6 18M6 6l12 12" />,
+                Check: <polyline points="20 6 9 17 4 12" />,
+                Eye: <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>,
+                List: <><line x1="8" x2="21" y1="6" y2="6" /><line x1="8" x2="21" y1="12" y2="12" /><line x1="8" x2="21" y1="18" y2="18" /><line x1="3" x2="3.01" y1="6" y2="6" /><line x1="3" x2="3.01" y1="12" y2="12" /><line x1="3" x2="3.01" y1="18" y2="18" /></>,
+                Palette: <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />,
+                Image: <><rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" /></>,
+                FileSpreadsheet: <><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v4a2 2 0 0 0 2 2h4" /><path d="M8 13h2" /><path d="M8 17h2" /><path d="M14 13h2" /><path d="M14 17h2" /></>,
+                Download: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />,
+                AlertCircle: <><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></>,
+                Database: <><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></>,
+                Globe: <><circle cx="12" cy="12" r="10" /><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" /><path d="M2 12h20" /></>,
+                Search: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></>,
+                Wifi: <><path d="M5 12.55a11 11 0 0 1 14.08 0" /><path d="M1.42 9a16 16 0 0 1 21.16 0" /><path d="M8.53 16.11a6 6 0 0 1 6.95 0" /><line x1="12" x2="12.01" y1="20" y2="20" /></>,
+                WifiOff: <><line x1="1" x2="23" y1="1" y2="23" /><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55" /><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39" /><path d="M10.71 5.05A16 16 0 0 1 22.58 9" /><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88" /><path d="M8.53 16.11a6 6 0 0 1 6.95 0" /><line x1="12" x2="12.01" y1="20" y2="20" /></>,
+                Loader2: <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            };
+            return (
+                <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                    {icons[name] || <circle cx="12" cy="12" r="10" />}
+                </svg>
+            );
+        };
+
+        // 專業 SVG 條碼產生組件 (還原至 v5.19 獨立乾淨版)
+        const BarcodeGenerator = ({ value }) => {
+            const barcodeRef = useRef(null);
+            useEffect(() => {
+                if (barcodeRef.current && value) {
+                    try {
+                        if (typeof JsBarcode === 'undefined') return;
+                        JsBarcode(barcodeRef.current, value, {
+                            format: "CODE128", 
+                            width: 1.5,         
+                            height: 28,         
+                            displayValue: false, 
+                            background: "transparent",
+                            lineColor: "#E1C284",
+                            margin: 0
+                        });
+                    } catch (error) {
+                        console.error("條碼生成失敗:", error);
+                    }
+                }
+            }, [value]);
+            return <svg ref={barcodeRef} className="max-w-[120%] h-auto origin-bottom-left scale-90 -ml-1"></svg>;
+        };
+
+        // 價格牌組件
+        const PriceTag = ({ tag, customLogo }) => (
+            <div className="cupicho-tag relative flex overflow-hidden box-border" style={{ width: '80mm', height: '50mm', backgroundColor: '#2B130F', color: '#E1C284', fontFamily: '"Shippori Mincho", "Noto Serif TC", serif' }}>
+                <div className="w-[35%] h-full flex flex-col pl-3 pt-3 pb-2 relative z-10">
+                    <div className="h-[30%] flex items-start -ml-1">
+                        {customLogo ? 
+                            <img src={customLogo} className="w-[90%] h-full object-contain object-left-top"/> : 
+                            <svg viewBox="0 0 100 45" className="w-[90%] h-auto">
+                                <ellipse cx="50" cy="22.5" rx="48" ry="20" fill="none" stroke="#E1C284" strokeWidth="1.5" />
+                                <ellipse cx="50" cy="22.5" rx="45" ry="17" fill="none" stroke="#E1C284" strokeWidth="0.5" opacity="0.5"/>
+                                <text x="50" y="24" textAnchor="middle" fill="#E1C284" fontSize="16" fontFamily='"Noto Serif TC", serif' fontWeight="bold" letterSpacing="0.5">CupiCho</text>
+                                <text x="50" y="36" textAnchor="middle" fill="#E1C284" fontSize="7" fontFamily="sans-serif" letterSpacing="1">丘比巧</text>
+                            </svg>
+                        }
+                    </div>
+                    <div className="flex-1 flex items-start pt-6 pl-1">
+                        <div className="flex items-baseline" style={{ fontFamily: '"Cinzel", serif' }}>
+                            <span style={{ fontSize: '14pt', marginRight: '3px' }}>$</span>
+                            <span style={{ fontSize: '20pt', lineHeight: '1' }}>{tag.price}</span>
+                        </div>
+                    </div>
+                    <div className="mt-auto mb-0 w-full pl-1">
+                        <div className="mb-1 h-[28px] w-full flex justify-start items-end overflow-hidden">
+                            {tag.itemNo && <BarcodeGenerator value={tag.itemNo} />}
+                        </div>
+                        <div className="text-[9px] tracking-widest text-[#E1C284] leading-none mt-1" style={{ fontFamily: '"Cinzel", serif', fontWeight: 'bold' }}>{tag.itemNo}</div>
+                    </div>
+                </div>
+                <div className="w-[65%] h-full flex flex-col pr-4 py-3 pl-1 relative z-10">
+                    <div style={{ fontFamily: '"Noto Serif TC", serif', fontSize: '18pt', lineHeight: '1.2', marginBottom: '4px', fontWeight: 'bold' }}>{tag.brand}</div>
+                    <div style={{ fontFamily: '"Shippori Mincho", "Noto Serif TC", serif', fontSize: '14pt', lineHeight: '1.3', marginBottom: '2px', fontWeight: 'bold' }}>{tag.name}</div>
+                    <div style={{ fontFamily: '"Noto Serif TC", serif', fontSize: '6pt', lineHeight: '1.2', textTransform: 'uppercase', letterSpacing: '0.5px', opacity: 0.9 }}>{tag.engName}</div>
+                    <div className="flex gap-5 absolute bottom-7 right-4" style={{ fontSize: '10pt' }}>
+                        <span style={{ fontFamily: '"Noto Serif TC", serif', fontWeight: 'bold' }}>{tag.weight}</span>
+                        <span style={{ fontFamily: '"Noto Serif TC", serif', fontWeight: 'bold' }}>{tag.country}</span>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const defaultTags = [{ id: '1001', brand: 'CUPICHO', name: '艾美黛黃金水果手工巧克力(5顆)', engName: 'Amedei Golden Fruit Handmade Chocolate (5pcs)', weight: '55g', price: '580', country: 'Italy', itemNo: '2023001' }];
+
+            const [inventory, setInventory] = useState(defaultTags);
+            const [tags, setTags] = useState([]);
+            const [customLogo, setCustomLogo] = useState(null);
+            const [isLoaded, setIsLoaded] = useState(false);
+            const [view, setView] = useState('inventory');
+            const [searchTerm, setSearchTerm] = useState('');
+            
+            const [editingId, setEditingId] = useState(null); 
+            const [editSource, setEditSource] = useState('inventory');
+            const [editFormData, setEditFormData] = useState(null);
+
+            const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+            const [clearConfirm, setClearConfirm] = useState(false);
+            const [clearInventoryConfirm, setClearInventoryConfirm] = useState(false);
+            const [csvImportData, setCsvImportData] = useState(null);
+            const [errorMsg, setErrorMsg] = useState(null);
+            const [isImporting, setIsImporting] = useState(false);
+
+            const [showDbModal, setShowDbModal] = useState(false);
+            const [firebaseConfigStr, setFirebaseConfigStr] = useState('');
+            const [db, setDb] = useState(null);
+            const [isCloudMode, setIsCloudMode] = useState(false);
+
+            const fileInputRef = useRef(null);
+            const csvInputRef = useRef(null);
+
+            useEffect(() => {
+                const loadData = () => {
+                    try {
+                        let savedLogo, savedConfig, savedInventory, savedTags;
+                        try { savedLogo = localStorage.getItem('cupicho_logo'); } catch(e) {}
+                        try { savedConfig = localStorage.getItem('cupicho_firebase_config'); } catch(e) {}
+                        
+                        if (savedLogo) setCustomLogo(savedLogo);
+
+                        if (savedConfig) {
+                            setFirebaseConfigStr(savedConfig);
+                            initFirebase(savedConfig);
+                        } else {
+                            try { savedInventory = localStorage.getItem('cupicho_inventory'); } catch(e) {}
+                            try { savedTags = localStorage.getItem('cupicho_print_list'); } catch(e) {}
+                            if (savedInventory) setInventory(JSON.parse(savedInventory));
+                            if (savedTags) setTags(JSON.parse(savedTags));
+                        }
+                    } catch (error) {
+                        console.error(error);
+                    } finally {
+                        setIsLoaded(true);
+                    }
+                };
+                loadData();
+            }, []);
+
+            const initFirebase = (configStr) => {
+                try {
+                    let config;
+                    try {
+                        config = JSON.parse(configStr);
+                    } catch (e) {
+                        let cleanStr = configStr.replace(/^(const|var|let)\s+\w+\s*=\s*/, '').trim();
+                        if (cleanStr.endsWith(';')) cleanStr = cleanStr.slice(0, -1);
+                        config = new Function('return ' + cleanStr)();
+                    }
+                    if (config && !firebase.apps.length) firebase.initializeApp(config);
+                    
+                    const firestore = firebase.firestore();
+                    setDb(firestore);
+                    setIsCloudMode(true);
+                    
+                    const unsubInv = firestore.collection('inventory').onSnapshot(snapshot => {
+                        const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+                        setInventory(items);
+                    }, err => { setErrorMsg("無法讀取庫存，請檢查 Firebase 權限設定。"); });
+
+                    const unsubTags = firestore.collection('print_list').onSnapshot(snapshot => {
+                        const items = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+                        setTags(items);
+                    });
+                    return () => { unsubInv(); unsubTags(); };
+                } catch (e) {
+                    setIsCloudMode(false);
+                }
+            };
+
+            const handleSaveConfig = () => {
+                try { localStorage.setItem('cupicho_firebase_config', firebaseConfigStr); } catch(e) {}
+                initFirebase(firebaseConfigStr);
+                setShowDbModal(false);
+            };
+
+            useEffect(() => {
+                if (isLoaded && !isCloudMode) {
+                    try {
+                        localStorage.setItem('cupicho_inventory', JSON.stringify(inventory));
+                        localStorage.setItem('cupicho_print_list', JSON.stringify(tags));
+                    } catch (e) {}
+                }
+            }, [inventory, tags, isLoaded, isCloudMode]);
+
+            useEffect(() => {
+                if (isLoaded && customLogo) {
+                    try { localStorage.setItem('cupicho_logo', customLogo); } catch (e) {}
+                }
+            }, [customLogo, isLoaded]);
+
+            const handleAddInventory = (item) => {
+                if (isCloudMode && db) db.collection('inventory').doc(item.id).set(item);
+                else setInventory([item, ...inventory]);
+            };
+
+            const handleUpdateItem = (id, field, value) => {
+                if (isCloudMode && db) {
+                    const colName = editSource === 'inventory' ? 'inventory' : 'print_list';
+                    db.collection(colName).doc(id).update({ [field]: value });
+                } else {
+                    if (editSource === 'inventory') setInventory(inventory.map(t => t.id === id ? { ...t, [field]: value } : t));
+                    else setTags(tags.map(t => t.id === id ? { ...t, [field]: value } : t));
+                }
+            };
+
+            const handleDeleteItem = (id) => {
+                if (isCloudMode && db) {
+                    const colName = editSource === 'inventory' ? 'inventory' : 'print_list';
+                    db.collection(colName).doc(id).delete();
+                } else {
+                    if (editSource === 'inventory') setInventory(inventory.filter(t => t.id !== id));
+                    else setTags(tags.filter(t => t.id !== id));
+                }
+                setDeleteConfirmId(null);
+                if (editingId === id) setEditingId(null);
+            };
+
+            const handleClearInventory = async () => {
+                if (isCloudMode && db) {
+                    const snapshot = await db.collection('inventory').get();
+                    const batchSize = 400; 
+                    for (let i = 0; i < snapshot.docs.length; i += batchSize) {
+                        const batch = db.batch();
+                        snapshot.docs.slice(i, i + batchSize).forEach(doc => batch.delete(doc.ref));
+                        await batch.commit();
+                    }
+                } else {
+                    setInventory([]);
+                }
+                setClearInventoryConfirm(false);
+            };
+
+            const handleAddPrintTag = (item) => {
+                const newItem = { ...item, id: Date.now().toString() + Math.random() };
+                if (isCloudMode && db) db.collection('print_list').doc(newItem.id).set(newItem);
+                else setTags([newItem, ...tags]);
+            };
+
+             const handleRemovePrintTag = (itemNo) => {
+                const target = tags.find(t => t.itemNo === itemNo);
+                if(target) {
+                    if(isCloudMode && db) db.collection('print_list').doc(target.id).delete();
+                    else {
+                        const index = tags.findIndex(t => t.id === target.id);
+                        const newTags = [...tags];
+                        newTags.splice(index, 1);
+                        setTags(newTags);
+                    }
+                }
+            };
+
+            const handleClearPrintList = () => {
+                if(isCloudMode && db) {
+                    const batch = db.batch();
+                    tags.forEach(t => batch.delete(db.collection('print_list').doc(t.id)));
+                    batch.commit();
+                } else {
+                    setTags([]);
+                }
+                setClearConfirm(false);
+            };
+
+            const openEdit = (item, source) => {
+                setEditFormData({ ...item }); 
+                setEditingId(item.id);
+                setEditSource(source);
+            };
+
+            const closeEdit = () => {
+                setEditingId(null);
+                setEditFormData(null);
+            };
+
+            const handleFormChange = (field, value) => {
+                setEditFormData(prev => ({ ...prev, [field]: value }));
+            };
+
+            const saveEdit = () => {
+                if (editFormData) {
+                    if (isCloudMode && db) {
+                        const colName = editSource === 'inventory' ? 'inventory' : 'print_list';
+                        db.collection(colName).doc(editFormData.id).set(editFormData);
+                    } else {
+                        if (editSource === 'inventory') setInventory(inventory.map(t => t.id === editFormData.id ? editFormData : t));
+                        else setTags(tags.map(t => t.id === editFormData.id ? editFormData : t));
+                    }
+                }
+                closeEdit();
+            };
+
+            const filteredInventory = useMemo(() => {
+                let result = [...inventory];
+                if (searchTerm) {
+                    const lowerTerm = searchTerm.toLowerCase();
+                    result = result.filter(item => 
+                        item.name.toLowerCase().includes(lowerTerm) || 
+                        item.itemNo.toLowerCase().includes(lowerTerm) ||
+                        (item.engName && item.engName.toLowerCase().includes(lowerTerm))
+                    );
+                }
+                result.sort((a, b) => {
+                    const noA = (a.itemNo || '').toString();
+                    const noB = (b.itemNo || '').toString();
+                    const numA = parseInt(noA, 10);
+                    const numB = parseInt(noB, 10);
+                    if (!isNaN(numA) && !isNaN(numB) && numA.toString() === noA && numB.toString() === noB) {
+                        return numA - numB;
+                    }
+                    return noA.localeCompare(noB, 'zh-TW', { numeric: true });
+                });
+                return result;
+            }, [inventory, searchTerm]);
+
+            const getPrintCount = (itemNo) => tags.filter(t => t.itemNo === itemNo).length;
+
+            const handleLogoUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onloadend = () => setCustomLogo(reader.result);
+                reader.readAsDataURL(file);
+            };
+
+            const addNewToInventory = () => {
+                const randomNo = Math.floor(100000 + Math.random() * 900000).toString();
+                const newItem = { 
+                    id: Date.now().toString(), brand: 'CUPICHO', name: '新商品', engName: '', 
+                    weight: '100g', price: '0', country: 'Taiwan', itemNo: randomNo 
+                };
+                handleAddInventory(newItem);
+                openEdit(newItem, 'inventory');
+            };
+
+            const handleCSVUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setIsImporting(true);
+
+                setTimeout(() => {
+                    const reader = new FileReader();
+                    reader.onload = (evt) => {
+                        const buffer = evt.target.result;
+                        let text = '';
+                        try {
+                            const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
+                            text = utf8Decoder.decode(buffer);
+                        } catch (err) {
+                            try {
+                                const big5Decoder = new TextDecoder('big5');
+                                text = big5Decoder.decode(buffer);
+                            } catch (fallbackErr) {
+                                setErrorMsg('檔案編碼讀取失敗。');
+                                setIsImporting(false);
+                                return;
+                            }
+                        }
+
+                        try {
+                            const rows = text.split(/\r\n|\n/);
+                            if(rows.length < 2) { setErrorMsg('CSV格式錯誤。'); setIsImporting(false); return; }
+                            
+                            const headers = rows[0].toUpperCase().split(',').map(h => h.trim());
+                            const getIndex = (keys) => headers.findIndex(h => keys.some(k => h.includes(k)));
+                            const indices = {
+                                itemNo: getIndex(['ITEM NO', 'NO.', '品號', 'ID', 'SKU']), 
+                                brand: getIndex(['BRAND', '品牌', '廠商']),
+                                name: getIndex(['NAME (CHI)', '品名', '中文', 'NAME']), 
+                                engName: getIndex(['NAME (ENG)', '英文', 'ENGLISH', 'ENG']),
+                                price: getIndex(['PRICE', '價格', '售價', '$']), 
+                                weight: getIndex(['WEIGHT', '重量', '規格']), 
+                                country: getIndex(['COUNTRY', '國家', '產地'])
+                            };
+                            
+                            const isSmartMode = indices.name !== -1 || indices.price !== -1;
+                            const newItems = [];
+                            
+                            for (let i = 1; i < rows.length; i++) {
+                                const row = rows[i].trim();
+                                if(!row) continue;
+                                const cols = row.split(',');
+                                const getData = (key, fallbackIndex) => {
+                                    if (isSmartMode) return (indices[key] !== -1 && cols[indices[key]]) ? cols[indices[key]].trim() : '';
+                                    if (cols.length === 6 && fallbackIndex >= 3) return fallbackIndex === 3 ? '' : (cols[fallbackIndex - 1]?.trim() || '');
+                                    return cols[fallbackIndex]?.trim() || '';
+                                };
+                                const rawName = getData('name', 2) || '未命名';
+                                if(cols.length > 2) {
+                                    newItems.push({
+                                        id: Date.now().toString() + i + Math.random(),
+                                        itemNo: getData('itemNo', 0) || '000',
+                                        brand: getData('brand', 1) || 'Brand',
+                                        name: rawName,
+                                        engName: getData('engName', 3) || '',
+                                        price: getData('price', 4) || '0',
+                                        weight: getData('weight', 5) || '',
+                                        country: getData('country', 6) || ''
+                                    });
+                                }
+                            }
+                            if (newItems.length > 0) setCsvImportData(newItems);
+                            else setErrorMsg('未找到有效商品資料。');
+                        } catch (e) { setErrorMsg('解析錯誤。'); } 
+                        finally { setIsImporting(false); }
+                    };
+                    reader.readAsArrayBuffer(file); 
+                }, 100);
+                e.target.value = '';
+            };
+
+            const confirmImport = async (mode) => {
+                if(!csvImportData) return;
+                if(mode === 'overwrite') {
+                    if (isCloudMode && db) {
+                        const snapshot = await db.collection('inventory').get();
+                        const batchSize = 400;
+                        for (let i = 0; i < snapshot.docs.length; i += batchSize) {
+                            const deleteBatch = db.batch();
+                            snapshot.docs.slice(i, i + batchSize).forEach(doc => deleteBatch.delete(doc.ref));
+                            await deleteBatch.commit();
+                        }
+                    } else setInventory([]);
+                }
+
+                if(isCloudMode && db) {
+                    const batchSize = 400;
+                    for (let i = 0; i < csvImportData.length; i += batchSize) {
+                        const writeBatch = db.batch();
+                        csvImportData.slice(i, i + batchSize).forEach(item => writeBatch.set(db.collection('inventory').doc(item.id.toString()), item));
+                        await writeBatch.commit();
+                    }
+                    alert(mode === 'overwrite' ? "已清空舊資料並匯入新庫存！" : "已追加匯入！");
+                } else {
+                    if (mode === 'overwrite') setInventory(csvImportData);
+                    else setInventory([...csvImportData, ...inventory]);
+                    alert("匯入完成！");
+                }
+                setCsvImportData(null);
+                setView('inventory');
+            };
+            
+             const downloadTemplate = () => {
+                const csvContent = "\ufeffITEM NO.,BRAND,NAME (CHI),NAME (ENG),PRICE $,WEIGHT,COUNTRY\n2023001,CUPICHO,範例巧克力,,580,55g,Italy\n";
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
+                link.download = "cupicho_template.csv";
+                link.click();
+            };
+
+            return (
+                <div className="fixed inset-0 w-full flex flex-col max-w-md mx-auto bg-[#1a0e0b] shadow-2xl font-sans text-[#E1C284] print:static print:block print:w-full print:max-w-none print:h-auto print:overflow-visible print:shadow-none print:bg-transparent">
+                    <input type="file" ref={fileInputRef} onChange={handleLogoUpload} accept="image/*" className="hidden" />
+                    <input type="file" ref={csvInputRef} onChange={handleCSVUpload} accept=".csv" className="hidden" />
+
+                    <header className="shrink-0 bg-[#2B130F] px-4 py-3 flex items-center justify-between border-b border-[#E1C284]/20 z-20 shadow-lg no-print">
+                        <div className="flex items-center gap-2">
+                            <div className="text-[#E1C284]"><Icon name="Palette" size={20}/></div>
+                            <div>
+                                <div className="flex items-center gap-2">
+                                    <h1 className="font-bold text-[#E1C284] text-base tracking-widest" style={{ fontFamily: '"Noto Serif TC", serif' }}>CUPICHO</h1>
+                                    <span className="text-[10px] bg-[#E1C284]/20 text-[#E1C284] px-1.5 py-0.5 rounded border border-[#E1C284]/30">{VERSION}</span>
+                                </div>
+                                <p className={`text-[10px] flex items-center gap-1 ${isCloudMode ? 'text-green-400' : 'text-[#E1C284]/60'}`}>
+                                    {isCloudMode ? <><Icon name="Wifi" size={10} /> Cloud Sync</> : <><Icon name="WifiOff" size={10} /> Local Mode</>}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => setShowDbModal(true)} className={`p-2 rounded-lg border ${isCloudMode ? 'bg-green-900/30 border-green-500 text-green-400' : 'bg-[#2B130F] border-[#E1C284]/50 text-[#E1C284]/50'}`} title="資料庫設定"><Icon name="Database" size={18}/></button>
+                            <button onClick={() => fileInputRef.current.click()} className="bg-[#2B130F] border border-[#E1C284]/50 text-[#E1C284] p-2 rounded-lg" title="更換 Logo"><Icon name="Image" size={18}/></button>
+                        </div>
+                    </header>
+
+                    <main className="flex-1 overflow-y-auto pb-24 no-print block relative">
+                        {view === 'inventory' && (
+                            <>
+                                <div className="sticky top-0 z-10 bg-[#1a0e0b] p-4 shadow-[0_4px_10px_rgba(0,0,0,0.5)] border-b border-[#E1C284]/10">
+                                    <div className="bg-[#2B130F] p-4 rounded-sm border border-[#E1C284]/30">
+                                        <h2 className="font-bold text-lg mb-3 flex items-center gap-2"><Icon name="Database" size={20}/> 商品庫存 ({inventory.length})</h2>
+                                        <div className="flex gap-2 mb-3">
+                                            <div className="flex-1 relative">
+                                                <div className="absolute left-3 top-2.5 text-[#E1C284]/50"><Icon name="Search" size={16}/></div>
+                                                <input type="text" placeholder="搜尋..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-[#3e2b27] border border-[#E1C284]/30 rounded-sm text-[#E1C284] outline-none placeholder-[#E1C284]/30"/>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2 text-xs">
+                                            <button onClick={() => csvInputRef.current.click()} className="flex items-center gap-1 bg-[#E1C284]/20 px-3 py-1.5 rounded-full border border-[#E1C284]/30"><Icon name="FileSpreadsheet" size={12}/> 匯入</button>
+                                            <button onClick={downloadTemplate} className="flex items-center gap-1 bg-[#E1C284]/20 px-3 py-1.5 rounded-full border border-[#E1C284]/30"><Icon name="Download" size={12}/> 範本</button>
+                                            <div className="ml-auto flex gap-2">
+                                                {inventory.length > 0 && (
+                                                    <button onClick={() => setClearInventoryConfirm(true)} className="flex items-center gap-1 text-red-400 px-3 py-1.5 rounded-full border border-red-400/50 hover:bg-red-400/20"><Icon name="Trash2" size={12}/> 清空</button>
+                                                )}
+                                                <button onClick={addNewToInventory} className="flex items-center gap-1 bg-[#E1C284] text-[#2B130F] px-3 py-1.5 rounded-full font-bold"><Icon name="Plus" size={12}/> 新增</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div className="p-4 space-y-2">
+                                    {filteredInventory.map(item => {
+                                        const count = getPrintCount(item.itemNo);
+                                        return (
+                                            <div key={item.id} className="bg-[#3e2b27] p-3 rounded-sm border border-[#E1C284]/20 flex justify-between items-center">
+                                                <div className="flex-1 min-w-0 pr-2 cursor-pointer" onClick={() => openEdit(item, 'inventory')}>
+                                                    <div className="text-[10px] text-[#E1C284]/60 font-mono">#{item.itemNo}</div>
+                                                    <div className="font-bold truncate" style={{ fontFamily: '"Shippori Mincho", "Noto Serif TC", serif' }}>{item.name}</div>
+                                                    {!item.engName ? (
+                                                        <div className="text-[10px] text-red-400/80 italic flex items-center gap-1"><Icon name="AlertCircle" size={10}/> 缺少英文</div>
+                                                    ) : (
+                                                        <div className="text-[10px] text-[#E1C284]/50 truncate uppercase" style={{ fontFamily: '"Noto Serif TC", serif' }}>{item.engName}</div>
+                                                    )}
+                                                    <div className="text-xs opacity-70" style={{ fontFamily: '"Cinzel", serif' }}>${item.price}</div>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                     <button onClick={() => openEdit(item, 'inventory')} className="p-2 text-[#E1C284]/50 hover:text-[#E1C284]"><Icon name="Edit3" size={16}/></button>
+                                                     {count > 0 ? (
+                                                        <div className="flex items-center bg-[#2B130F] border border-[#E1C284] rounded-sm h-8">
+                                                            <button onClick={() => handleRemovePrintTag(item.itemNo)} className="px-2 h-full hover:bg-[#E1C284]/20"><Icon name="Minus" size={12}/></button>
+                                                            <span className="px-2 text-xs font-bold text-[#E1C284] border-x border-[#E1C284]/30 min-w-[24px] text-center">{count}</span>
+                                                            <button onClick={() => handleAddPrintTag(item)} className="px-2 h-full hover:bg-[#E1C284]/20"><Icon name="Plus" size={12}/></button>
+                                                        </div>
+                                                     ) : (
+                                                        <button onClick={() => handleAddPrintTag(item)} className="bg-[#2B130F] border border-[#E1C284] text-[#E1C284] text-xs px-3 py-1.5 rounded-sm flex items-center gap-1"><Icon name="Plus" size={12}/> 加入</button>
+                                                     )}
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            </>
+                        )}
+
+                        {view === 'list' && (
+                            <>
+                                <div className="sticky top-0 z-10 bg-[#1a0e0b] p-4 shadow-[0_4px_10px_rgba(0,0,0,0.5)] border-b border-[#E1C284]/10 flex justify-between items-center">
+                                    <h2 className="font-bold text-lg flex items-center gap-2"><Icon name="List" size={20}/> 待印清單 ({tags.length})</h2>
+                                    {tags.length > 0 && <button onClick={() => setClearConfirm(true)} className="text-xs text-red-400 border border-red-400/50 px-2 py-1 rounded-sm flex items-center gap-1"><Icon name="Trash2" size={12}/> 清空</button>}
+                                </div>
+                                <div className="p-4 space-y-4">
+                                    {tags.length === 0 ? <div className="py-20 text-center opacity-50"><p>清單是空的</p><button onClick={() => setView('inventory')} className="text-[#E1C284] underline text-sm mt-2">去庫存挑選</button></div> : 
+                                        tags.map(tag => (
+                                            <div key={tag.id} className="bg-[#3e2b27] p-4 rounded-sm border border-[#E1C284]/30 shadow-md flex items-center justify-between" onClick={() => openEdit(tag, 'list')}>
+                                                <div className="flex-1 min-w-0 pr-3">
+                                                    <div className="text-[10px] font-mono text-[#E1C284]/70">#{tag.itemNo}</div>
+                                                    <p className="font-bold text-[#E1C284] truncate" style={{ fontFamily: '"Shippori Mincho", "Noto Serif TC", serif' }}>{tag.name}</p>
+                                                    {!tag.engName ? (
+                                                        <p className="text-[10px] text-red-400/80 italic flex items-center gap-1"><Icon name="AlertCircle" size={10}/> 缺少英文</p>
+                                                    ) : (
+                                                        <p className="text-[10px] text-[#E1C284]/60 truncate uppercase" style={{ fontFamily: '"Noto Serif TC", serif' }}>{tag.engName}</p>
+                                                    )}
+                                                </div>
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <span className="text-xl font-serif text-[#E1C284]" style={{ fontFamily: '"Cinzel", serif' }}>${tag.price}</span>
+                                                    <button className="p-2 text-[#E1C284]/50 hover:text-red-400" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(tag.id); setEditSource('list'); }}><Icon name="Trash2" size={16}/></button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    }
+                                </div>
+                            </>
+                        )}
+
+                        {view === 'preview' && (
+                            <>
+                                <div className="sticky top-0 z-10 w-full bg-[#1a0e0b] p-4 shadow-[0_4px_10px_rgba(0,0,0,0.5)] border-b border-[#E1C284]/10">
+                                    <div className="flex justify-between items-center bg-[#E1C284]/10 p-2 rounded-lg border border-[#E1C284]/20">
+                                        <span className="text-sm font-bold text-[#E1C284] flex items-center gap-1"><Icon name="Eye" size={16}/> 預覽 ({tags.length})</span>
+                                        <button onClick={() => {
+                                            if(tags.length === 0) { alert("清單是空的！"); return; }
+                                            window.print();
+                                        }} className="bg-[#E1C284] text-[#2B130F] px-4 py-1.5 rounded-sm font-bold text-sm flex items-center gap-1"><Icon name="Printer" size={16}/> 列印</button>
+                                    </div>
+                                </div>
+                                <div className="p-4 flex flex-col items-center gap-6 pb-10">
+                                    {tags.length === 0 ? (
+                                        <div className="text-center py-10 opacity-50 flex flex-col items-center gap-3">
+                                            <Icon name="AlertCircle" size={48} />
+                                            <p>沒有標籤可列印</p>
+                                            <button onClick={() => setView('inventory')} className="bg-[#E1C284] text-[#2B130F] px-4 py-2 rounded-sm font-bold text-sm mt-3">前往庫存選擇</button>
+                                        </div>
+                                    ) : (
+                                        tags.map(tag => <div key={tag.id} className="shadow-2xl shadow-black/50 origin-top"><PriceTag tag={tag} customLogo={customLogo} /></div>)
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </main>
+
+                    <div className="print-container">
+                        {tags.map(tag => <div key={tag.id}><PriceTag tag={tag} customLogo={customLogo} /></div>)}
+                    </div>
+
+                    <nav className="absolute bottom-0 left-0 right-0 w-full bg-[#2B130F] border-t border-[#E1C284]/20 px-6 py-2 flex justify-around items-center z-30 shadow-2xl pb-6 no-print">
+                        <button onClick={() => setView('inventory')} className={`flex flex-col items-center gap-1 p-2 rounded-lg ${view === 'inventory' ? 'text-[#E1C284]' : 'text-[#E1C284]/30'}`}><Icon name="Database" size={24} /><span className="text-[10px]">庫存</span></button>
+                        <div className="w-8"></div>
+                        <button onClick={() => setView('list')} className={`flex flex-col items-center gap-1 p-2 rounded-lg ${view === 'list' ? 'text-[#E1C284]' : 'text-[#E1C284]/30'}`}>
+                            <div className="relative"><Icon name="List" size={24} />{tags.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] w-4 h-4 flex items-center justify-center rounded-full">{tags.length}</span>}</div>
+                            <span className="text-[10px]">待印</span>
+                        </button>
+                        <div className="w-8"></div>
+                        <button onClick={() => setView('preview')} className={`flex flex-col items-center gap-1 p-2 rounded-lg ${view === 'preview' ? 'text-[#E1C284]' : 'text-[#E1C284]/30'}`}><Icon name="Eye" size={24} /><span className="text-[10px]">預覽</span></button>
+                    </nav>
+
+                    {showDbModal && (
+                        <div className="fixed inset-0 bg-black/90 z-[90] flex items-center justify-center p-6 backdrop-blur-sm">
+                            <div className="bg-[#2B130F] border border-[#E1C284] rounded-sm p-6 w-full max-w-xs shadow-2xl relative">
+                                <button onClick={() => setShowDbModal(false)} className="absolute top-2 right-2 text-[#E1C284]/50"><Icon name="X" size={16}/></button>
+                                <h3 className="font-serif text-lg text-[#E1C284] text-center mb-4">資料庫設定</h3>
+                                <textarea rows="6" placeholder='Firebase Config JSON' value={firebaseConfigStr} onChange={(e) => setFirebaseConfigStr(e.target.value)} className="w-full px-3 py-2 bg-[#1a0e0b] text-[#E1C284] border border-[#E1C284]/30 rounded-sm mb-4 outline-none text-xs font-mono"></textarea>
+                                <button onClick={handleSaveConfig} className="w-full py-3 bg-[#E1C284] text-[#2B130F] rounded-sm font-bold text-sm">儲存並連線</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {isImporting && (
+                        <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-6 backdrop-blur-sm">
+                             <div className="bg-[#2B130F] border border-[#E1C284] p-8 rounded-sm flex flex-col items-center">
+                                <Icon name="Loader2" className="animate-spin text-[#E1C284] mb-4" size={48} />
+                                <p className="text-[#E1C284] font-bold">處理中...</p>
+                             </div>
+                        </div>
+                    )}
+
+                    {editingId && editFormData && (
+                        <div className="fixed inset-0 bg-black/80 z-50 flex flex-col justify-end backdrop-blur-[2px]">
+                            <div className="bg-[#2B130F] border-t border-[#E1C284]/30 rounded-t-3xl p-6 max-h-[90vh] overflow-y-auto animate-in slide-in-from-bottom duration-300 shadow-2xl">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xl font-serif text-[#E1C284] flex items-center gap-2 italic">編輯商品</h3>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => setDeleteConfirmId(editingId)} className="p-2 bg-red-900/30 rounded-full text-red-400"><Icon name="Trash2" size={20}/></button>
+                                        <button onClick={closeEdit} className="p-2 bg-[#E1C284]/10 rounded-full text-[#E1C284]"><Icon name="X" size={20}/></button>
+                                    </div>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-3 gap-3">
+                                        <div className="col-span-2 space-y-1"><label className="text-[10px] text-[#E1C284]/60">品號</label><input type="text" value={editFormData.itemNo} onChange={(e) => handleFormChange('itemNo', e.target.value)} className="w-full px-3 py-3 bg-[#1a0e0b] text-[#E1C284] rounded-sm border border-[#E1C284]/20 font-mono"/></div>
+                                        <div className="col-span-1 space-y-1"><label className="text-[10px] text-[#E1C284]/60">國家</label><input type="text" value={editFormData.country} onChange={(e) => handleFormChange('country', e.target.value)} className="w-full px-3 py-3 bg-[#1a0e0b] text-[#E1C284] rounded-sm border border-[#E1C284]/20 text-center"/></div>
+                                    </div>
+                                    <div className="space-y-1"><label className="text-[10px] text-[#E1C284]/60">品牌</label><input type="text" value={editFormData.brand} onChange={(e) => handleFormChange('brand', e.target.value)} className="w-full px-3 py-3 bg-[#1a0e0b] text-[#E1C284] rounded-sm border border-[#E1C284]/20"/></div>
+                                    <div className="space-y-1"><label className="text-[10px] text-[#E1C284]/60">中文品名</label><input type="text" value={editFormData.name} onChange={(e) => handleFormChange('name', e.target.value)} className="w-full px-3 py-3 bg-[#1a0e0b] text-[#E1C284] rounded-sm border border-[#E1C284]/20 text-lg"/></div>
+                                    <div className="flex gap-2 items-end">
+                                        <div className="flex-1 space-y-1"><label className="text-[10px] text-[#E1C284]/60">英文品名</label><input type="text" value={editFormData.engName} onChange={(e) => handleFormChange('engName', e.target.value)} className="w-full px-3 py-2 bg-[#1a0e0b] text-[#E1C284] rounded-sm border border-[#E1C284]/20 text-xs uppercase"/></div>
+                                        <button onClick={() => window.open(`https://translate.google.com/?sl=zh-TW&tl=en&text=${encodeURIComponent(editFormData.name)}&op=translate`, '_blank')} className="mb-[1px] h-[34px] px-3 bg-[#E1C284] text-[#2B130F] rounded-sm font-bold text-[10px] flex items-center gap-1"><Icon name="Globe" size={12}/></button>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-1"><label className="text-[10px] text-[#E1C284]/60">價格 $</label><input type="number" value={editFormData.price} onChange={(e) => handleFormChange('price', e.target.value)} className="w-full px-3 py-3 bg-[#1a0e0b] text-[#E1C284] rounded-sm border border-[#E1C284]/20 text-2xl font-mono"/></div>
+                                        <div className="space-y-1"><label className="text-[10px] text-[#E1C284]/60">重量</label><input type="text" value={editFormData.weight} onChange={(e) => handleFormChange('weight', e.target.value)} className="w-full px-3 py-3 bg-[#1a0e0b] text-[#E1C284] rounded-sm border border-[#E1C284]/20 text-sm"/></div>
+                                    </div>
+                                    <button onClick={saveEdit} className="w-full py-4 bg-[#E1C284] text-[#2B130F] rounded-sm font-bold flex items-center justify-center gap-2 mt-4 active:scale-[0.98] transition-transform"><Icon name="Check" size={20}/> 儲存</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {deleteConfirmId && (
+                        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-6 backdrop-blur-sm">
+                            <div className="bg-[#2B130F] border border-[#E1C284] rounded-sm p-6 w-full max-w-xs shadow-2xl">
+                                <h3 className="font-serif text-lg mb-2 text-center">確認刪除？</h3>
+                                <div className="flex gap-3 mt-6">
+                                    <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-3 bg-[#1a0e0b] text-[#E1C284]/60 rounded-sm border border-[#E1C284]/20">取消</button>
+                                    <button onClick={() => handleDeleteItem(deleteConfirmId)} className="flex-1 py-3 bg-[#E1C284] text-[#2B130F] rounded-sm font-bold">刪除</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {clearConfirm && (
+                        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-6 backdrop-blur-sm">
+                            <div className="bg-[#2B130F] border border-[#E1C284] rounded-sm p-6 w-full max-w-xs shadow-2xl">
+                                <h3 className="font-serif text-lg mb-2 text-center">清空待印清單？</h3>
+                                <div className="flex gap-3 mt-6">
+                                    <button onClick={() => setClearConfirm(false)} className="flex-1 py-3 bg-[#1a0e0b] text-[#E1C284]/60 rounded-sm border border-[#E1C284]/20">取消</button>
+                                    <button onClick={handleClearPrintList} className="flex-1 py-3 bg-red-600 text-white rounded-sm font-bold">確認</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {clearInventoryConfirm && (
+                        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-6 backdrop-blur-sm">
+                            <div className="bg-[#2B130F] border border-red-500 rounded-sm p-6 w-full max-w-xs shadow-2xl">
+                                <h3 className="font-serif text-lg mb-2 text-center text-red-500">清空所有庫存？</h3>
+                                <div className="flex gap-3 mt-6">
+                                    <button onClick={() => setClearInventoryConfirm(false)} className="flex-1 py-3 bg-[#1a0e0b] text-[#E1C284]/60 rounded-sm border border-[#E1C284]/20">取消</button>
+                                    <button onClick={handleClearInventory} className="flex-1 py-3 bg-red-600 text-white rounded-sm font-bold">確認</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {csvImportData && (
+                        <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-6 backdrop-blur-sm">
+                            <div className="bg-[#2B130F] border border-[#E1C284] rounded-sm p-6 w-full max-w-xs shadow-2xl">
+                                <h3 className="font-serif text-lg text-[#E1C284] text-center mb-4">確認匯入</h3>
+                                <p className="text-[#E1C284]/80 text-sm text-center font-serif mb-6">成功讀取 {csvImportData.length} 筆資料。</p>
+                                <div className="flex flex-col gap-3">
+                                    <button onClick={() => confirmImport('overwrite')} className="w-full py-3 bg-[#E1C284] text-[#2B130F] rounded-sm font-bold text-sm">覆蓋舊庫存</button>
+                                    <button onClick={() => confirmImport('append')} className="w-full py-3 bg-[#3e2b27] text-[#E1C284] rounded-sm font-bold text-sm border border-[#E1C284]/30">追加到現有庫存</button>
+                                    <button onClick={() => setCsvImportData(null)} className="w-full py-2 text-[#E1C284]/50 text-xs text-center">取消</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {errorMsg && (
+                        <div className="fixed inset-0 bg-black/80 z-[80] flex items-center justify-center p-6 backdrop-blur-sm">
+                            <div className="bg-[#2B130F] border border-red-500 rounded-sm p-6 w-full max-w-xs shadow-2xl">
+                                <div className="flex flex-col items-center"><p className="text-red-500 text-center font-bold mb-4">{errorMsg}</p><button onClick={() => setErrorMsg(null)} className="w-full py-2 bg-red-500/20 text-red-500 border border-red-500 rounded-sm">關閉</button></div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
